@@ -1,15 +1,16 @@
 import numpy as np
-from nltk.corpus import qc
 from qiskit import QuantumCircuit, QuantumRegister, ClassicalRegister
 from qiskit_aer import AerSimulator
 from qiskit.quantum_info import Statevector
 from scipy.linalg import expm
 
+
 def validate_inputs(A, b):
-    """Check if A is Hermitian, square, dimensions of power 2, and b has a matching dimension."""
+    """Check that A is Hermitian, square, dimensions are power of 2,
+    and b has matching dimension."""
     N = A.shape[0]
     if A.shape[0] != A.shape[1]:
-        raise ValueError("A must be a square matrix.")
+        raise ValueError("A must be square.")
     if not np.allclose(A, A.conj().T):
         raise ValueError("A must be Hermitian.")
     if np.log2(N) != int(np.log2(N)):
@@ -19,29 +20,44 @@ def validate_inputs(A, b):
     if np.linalg.det(A) == 0:
         raise ValueError("A must be invertible.")
 
+
 def normalise(v):
-    """Return normalised vector v."""
+    """Return the normalised version of a vector."""
     norm = np.linalg.norm(v)
     if norm < 1e-12:
-        raise ValueError("v must be positive.")
+        raise ValueError("Cannot normalise the zero vector.")
     return v / norm
+
 
 def classical_solve(A, b):
     """Solve Ax = b classically and return the normalised solution."""
     x = np.linalg.solve(A, b)
     return normalise(x)
 
+
 def get_eigenvalues(A):
     """Return eigenvalues and eigenvectors of A."""
     eigenvalues, eigenvectors = np.linalg.eigh(A)
     return eigenvalues, eigenvectors
 
+
 def choose_t0(eigenvalues, n_clock):
-    """Choose the time parameter t0 so that eigenvalues map to phases representable in the n_clock bits."""
+    """Choose the time parameter t0 so that eigenvalues map to phases
+    representable in n_clock bits."""
     lambda_max = np.max(np.abs(eigenvalues))
-    t0 = 2 * np.pi / (2**n_clock)  #scale so that lambda_max * to t0 < 2*pi
-    t0 = 2 * np.pi / (lambda_max * 1.1) #small buffer to ensure all eigenvalues fit within the range of representable phases
+    t0 = 2 * np.pi / (2**n_clock)
+    # Scale so that lambda_max * t0 < 2*pi
+    t0 = 2 * np.pi / (lambda_max * 1.1)  # small buffer
     return t0
+
+
+def build_hamiltonian_simulation(A, t, n_system):
+    """Build the unitary e^{iAt} as a gate."""
+    U = expm(1j * A * t)
+    qc = QuantumCircuit(n_system, name=f'e^(iAt)')
+    qc.unitary(U, range(n_system))
+    return qc.to_gate()
+
 
 def build_controlled_hamiltonian(A, t, power, n_system):
     """Build controlled-U^{2^power} = controlled-e^{iA * 2^power * t}."""
@@ -50,25 +66,27 @@ def build_controlled_hamiltonian(A, t, power, n_system):
     qc.unitary(U, range(n_system))
     return qc.to_gate().control(1)
 
-def build_qpe(A, t0, n_clock, n_system):
-    """Build the Quantum Phase Estimation circuit."""
-    qc.QuantumCircuit(n_system + n_system, name='QPE')
 
-    #Step 1: Hadamard on all clock qubits
+def build_qpe(A, t0, n_clock, n_system):
+    """Build the quantum phase estimation circuit."""
+    qc = QuantumCircuit(n_clock + n_system, name='QPE')
+
+    # Step 1: Hadamard on all clock qubits
     for i in range(n_clock):
         qc.h(i)
 
-    #Step 2: Controlled-U^{2^k} operations
+    # Step 2: Controlled-U^{2^k} operations
     for k in range(n_clock):
         cu = build_controlled_hamiltonian(A, t0, k, n_system)
         control_qubit = k
         target_qubits = list(range(n_clock, n_clock + n_system))
         qc.append(cu, [control_qubit] + target_qubits)
 
-    #Step 3: Inverse QFT on clock register
+    # Step 3: Inverse QFT on clock register
     qc.append(build_inverse_qft(n_clock), range(n_clock))
 
     return qc.to_gate()
+
 
 def build_inverse_qft(n):
     """Build the inverse QFT on n qubits."""
@@ -79,13 +97,15 @@ def build_inverse_qft(n):
 
     for target in range(n):
         for control in range(target):
-            angle = -np.pi / (2 ** (target - control))
+            angle = -np.pi / (2**(target - control))
             qc.cp(angle, control, target)
         qc.h(target)
+
     return qc.to_gate()
 
+
 def build_qft(n):
-    """Build the QFT on n qubits."""
+    """Build the QFT on n qubits (used for inverse QPE)."""
     qc = QuantumCircuit(n, name='QFT')
 
     for target in range(n - 1, -1, -1):
@@ -99,11 +119,11 @@ def build_qft(n):
 
     return qc.to_gate()
 
+
 def build_controlled_rotation(n_clock):
     """Build the controlled rotation that maps
     |lambda_j>|0> -> |lambda_j>(C/lambda_j|1> + sqrt(1-C^2/lambda_j^2)|0>).
     Implemented as controlled-Ry rotations based on clock register bits."""
-
     qc = QuantumCircuit(n_clock + 1, name='C-Rot')
 
     for k in range(n_clock):
@@ -115,24 +135,25 @@ def build_controlled_rotation(n_clock):
 
     return qc.to_gate()
 
+
 def build_inverse_qpe(A, t0, n_clock, n_system):
-    """Build the inverse QPE on n qubits."""
+    """Build the inverse QPE circuit."""
     qc = QuantumCircuit(n_clock + n_system, name='QPE†')
 
-    #Inverse of QPE: QFT, then inverse controlled unitaries, then Hadamard's
+    # Inverse of QPE: QFT, then inverse controlled unitaries, then Hadamards
     qc.append(build_qft(n_clock), range(n_clock))
 
     for k in range(n_clock - 1, -1, -1):
-        cu = build_controlled_hamiltonian(A, t0, k, n_system)
+        cu = build_controlled_hamiltonian(A, -t0, k, n_system)
         control_qubit = k
         target_qubits = list(range(n_clock, n_clock + n_system))
         qc.append(cu, [control_qubit] + target_qubits)
-
 
     for i in range(n_clock):
         qc.h(i)
 
     return qc.to_gate()
+
 
 def build_hhl_circuit(A, b, n_clock):
     """Build the full HHL circuit for a given A and b."""
@@ -140,7 +161,7 @@ def build_hhl_circuit(A, b, n_clock):
     n_system = int(np.log2(N))
     t0 = choose_t0(get_eigenvalues(A)[0], n_clock)
 
-    #registers
+    # Registers
     clock = QuantumRegister(n_clock, name='clock')
     system = QuantumRegister(n_system, name='system')
     ancilla = QuantumRegister(1, name='ancilla')
@@ -148,29 +169,31 @@ def build_hhl_circuit(A, b, n_clock):
 
     qc = QuantumCircuit(clock, system, ancilla, c_ancilla)
 
-    #Step 1: Prepare |b> in system register
+    # Prepare |b> in the system register
     b_normalised = normalise(b)
     qc.initialize(b_normalised, system[:])
 
-    #Step 1: QPE
+    # Step 1: QPE
     qpe_qubits = list(range(n_clock)) + list(range(n_clock, n_clock + n_system))
     qc.append(build_qpe(A, t0, n_clock, n_system), qpe_qubits)
 
-    #Step 2: Controlled rotation
+    # Step 2: Controlled rotation
     rot_qubits = list(range(n_clock)) + [n_clock + n_system]
     qc.append(build_controlled_rotation(n_clock), rot_qubits)
 
-    #Step 3: Inverse QPE
+    # Step 3: Inverse QPE
     qc.append(build_inverse_qpe(A, t0, n_clock, n_system), qpe_qubits)
 
-    #Step 4: Measure ancilla
+    # Step 4: Measure ancilla
     qc.measure(ancilla, c_ancilla)
 
     return qc, t0
 
+
 def extract_solution(qc, n_clock, n_system):
-    """Run the circuit on the statevector simulator and extract the solution state conditioned on ancilla = |1>"""
-    #revome measurement for statevector simulation
+    """Run the circuit on the statevector simulator and extract the
+    solution state conditioned on ancilla = |1>."""
+    # Remove measurement for statevector simulation
     qc_copy = qc.remove_final_measurements(inplace=False)
 
     simulator = AerSimulator(method='statevector')
@@ -181,8 +204,8 @@ def extract_solution(qc, n_clock, n_system):
     n_total = n_clock + n_system + 1
     amplitudes = np.array(statevector)
 
-    #extract amplitudes where ancilla is |1>
-    #The ancilla is the last qubit in our register ordering
+    # Extract amplitudes where ancilla qubit = |1>
+    # The ancilla is the last qubit in our register ordering
     N_system = 2**n_system
     solution_amplitudes = np.zeros(N_system, dtype=complex)
 
@@ -200,7 +223,7 @@ def extract_solution(qc, n_clock, n_system):
             system_idx = int(system_bits, 2)
             solution_amplitudes[system_idx] = amplitudes[idx]
 
-        # Normalise
+    # Normalise
     norm = np.linalg.norm(solution_amplitudes)
     if norm < 1e-12:
         print("Warning: post-selection probability is near zero.")
@@ -208,8 +231,9 @@ def extract_solution(qc, n_clock, n_system):
 
     return solution_amplitudes / norm
 
+
 def run_hhl(A, b, n_clock=4):
-    """Main function for running the HHL circuit."""
+    """Main function to run HHL and compare with classical solution."""
     # Validate
     validate_inputs(A, b)
 
