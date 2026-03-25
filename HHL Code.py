@@ -193,25 +193,17 @@ def build_hhl_circuit(A, b, n_clock):
 def extract_solution(qc, n_clock, n_system):
     """Run the circuit on the statevector simulator and extract the
     solution state conditioned on ancilla = |1>."""
+    from qiskit import transpile
+
     # Remove measurement for statevector simulation
     qc_copy = qc.remove_final_measurements(inplace=False)
+    qc_copy.save_statevector()
 
-    # Decompose custom gates into basic gates that Aer understands
-    qc_decomposed = qc_copy.decompose()
-    while any(
-        inst.operation.name not in [
-            'u', 'u1', 'u2', 'u3', 'cx', 'cy', 'cz', 'h', 'x', 'y', 'z',
-            's', 'sdg', 't', 'tdg', 'rx', 'ry', 'rz', 'swap', 'ccx',
-            'unitary', 'initialize', 'save_statevector', 'id', 'p', 'cp',
-            'cry', 'crx', 'crz', 'barrier'
-        ]
-        for inst in qc_decomposed.data
-    ):
-        qc_decomposed = qc_decomposed.decompose()
-
+    # Transpile to basic gates instead of manual decomposition
     simulator = AerSimulator(method='statevector')
-    qc_decomposed.save_statevector()
-    result = simulator.run(qc_decomposed).result()
+    qc_transpiled = transpile(qc_copy, simulator)
+
+    result = simulator.run(qc_transpiled).result()
     statevector = result.get_statevector()
 
     n_total = n_clock + n_system + 1
