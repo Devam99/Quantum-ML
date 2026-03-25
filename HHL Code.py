@@ -132,3 +132,124 @@ def build_inverse_qpe(A, t0, n_clock, n_system):
         qc.h(i)
 
     return qc.to_gate()
+
+def build_hhl_circuit(A, b, n_clock):
+    """Build the full HHL circuit for a given A and b."""
+    N = A.shape[0]
+    n_system = int(np.log2(N))
+    t0 = choose_t0(get_eigenvalues(A)[0], n_clock)
+
+    #registers
+    clock = QuantumRegister(n_clock, name='clock')
+    system = QuantumRegister(n_system, name='system')
+    ancilla = QuantumRegister(1, name='ancilla')
+    c_ancilla = ClassicalRegister(1, name='c_ancilla')
+
+    qc = QuantumCircuit(clock, system, ancilla, c_ancilla)
+
+    #Step 1: Prepare |b> in system register
+    b_normalised = normalise(b)
+    qc.initialize(b_normalised, system[:])
+
+    #Step 1: QPE
+    qpe_qubits = list(range(n_clock)) + list(range(n_clock, n_clock + n_system))
+    qc.append(build_qpe(A, t0, n_clock, n_system), qpe_qubits)
+
+    #Step 2: Controlled rotation
+    rot_qubits = list(range(n_clock)) + [n_clock + n_system]
+    qc.append(build_controlled_rotation(n_clock), rot_qubits)
+
+    #Step 3: Inverse QPE
+    qc.append(build_inverse_qpe(A, t0, n_clock, n_system), qpe_qubits)
+
+    #Step 4: Measure ancilla
+    qc.measure(ancilla, c_ancilla)
+
+    return qc, t0
+
+def extract_solution(qc, n_clock, n_system):
+    """Run the circuit on the statevector simulator and extract the solution state conditioned on ancilla = |1>"""
+    #revome measurement for statevector simulation
+    qc_copy = qc.remove_final_measurements(inplace=False)
+
+    simulator = AerSimulator(method='statevector')
+    qc_copy.save_statevector()
+    result = simulator.run(qc_copy).result()
+    statevector = result.get_statevector()
+
+    n_total = n_clock + n_system + 1
+    amplitudes = np.array(statevector)
+
+    #extract amplitudes where ancilla is |1>
+    #The ancilla is the last qubit in our register ordering
+    N_system = 2**n_system
+    solution_amplitudes = np.zeros(N_system, dtype=complex)
+
+    for idx in range(len(amplitudes)):
+        # Convert index to binary string
+        binary = format(idx, f'0{n_total}b')
+
+        # Check if ancilla (last qubit) is 1 and clock register is all 0
+        ancilla_bit = binary[-1]
+        clock_bits = binary[:n_clock]
+
+        if ancilla_bit == '1' and all(c == '0' for c in clock_bits):
+            # Extract system register bits
+            system_bits = binary[n_clock:n_clock + n_system]
+            system_idx = int(system_bits, 2)
+            solution_amplitudes[system_idx] = amplitudes[idx]
+
+        # Normalise
+    norm = np.linalg.norm(solution_amplitudes)
+    if norm < 1e-12:
+        print("Warning: post-selection probability is near zero.")
+        return solution_amplitudes
+
+    return solution_amplitudes / norm
+
+def run_hhl(A, b, n_clock=4):
+    """Main function for running the HHL circuit."""
+    # Validate
+    validate_inputs(A, b)
+
+    N = A.shape[0]
+    n_system = int(np.log2(N))
+
+    print("=" * 60)
+    print("HHL Algorithm Implementation")
+    print("=" * 60)
+    print(f"\nSystem size: {N} x {N}")
+    print(f"System qubits: {n_system}")
+    print(f"Clock qubits: {n_clock}")
+    print(f"Total qubits: {n_system + n_clock + 1}")
+
+    # Eigenvalue information
+    eigenvalues, _ = get_eigenvalues(A)
+    kappa = np.max(np.abs(eigenvalues)) / np.min(np.abs(eigenvalues))
+    print(f"\nEigenvalues of A: {eigenvalues}")
+    print(f"Condition number: {kappa:.4f}")
+
+    # Classical solution
+    x_classical = classical_solve(A, b)
+    print(f"\nClassical solution (normalised): {x_classical}")
+
+    # Build and run HHL
+    print(f"\nBuilding HHL circuit...")
+    qc, t0 = build_hhl_circuit(A, b, n_clock)
+    print(f"Circuit depth: {qc.depth()}")
+    print(f"Gate count: {qc.count_ops()}")
+
+    print(f"\nRunning HHL on simulator...")
+    x_hhl = extract_solution(qc, n_clock, n_system)
+    print(f"HHL solution (normalised): {x_hhl}")
+
+    # Comparison
+    fidelity = np.abs(np.dot(x_classical.conj(), x_hhl))**2
+    print(f"\nFidelity |<x_classical|x_hhl>|^2: {fidelity:.6f}")
+    print(f"Element-wise comparison:")
+    for i in range(N):
+        print(f"  x[{i}]: classical = {x_classical[i]:.6f}, "
+              f"HHL = {x_hhl[i]:.6f}")
+    print("=" * 60)
+
+    return x_classical, x_hhl, fidelity, qc
