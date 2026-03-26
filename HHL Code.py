@@ -478,10 +478,10 @@ if __name__ == "__main__":
     # b4 = np.array([1.0, 0.0, 0.0, 1.0])
     # result4 = run_hhl(A4, b4, n_clock=6)
 
-    # Example 5: User input
+    #Example 5: User input
     # print("\n\n>>> Example 5: Custom input\n")
     # try:
-    #     #n = int(input("Enter dimension N (must be power of 2): "))
+    #     n = int(input("Enter dimension N (must be power of 2): "))
     #     print(f"Enter {n}x{n} Hermitian matrix A row by row:")
     #     A_custom = np.zeros((n, n), dtype=float)
     #     for i in range(n):
@@ -519,14 +519,14 @@ if __name__ == "__main__":
     # b_large = np.random.randn(n)
     #
     # result_large = run_hhl(A_large, b_large, n_clock=n_clock)
-
-
+    #
+    #
     # Practical large example: 32 x 32 (18 qubits)
-    # print("\n\n>>> Large system: 32x32 (18 qubits)\n")
-    # n = 32
-    # np.random.seed(42)
-    # eigenvalues_custom = np.random.uniform(1.0, 10.0, size=n)
-    # Q, _ = np.linalg.qr(np.random.randn(n, n))
-    # A_med = Q @ np.diag(eigenvalues_custom) @ Q.T
-    # b_med = np.random.randn(n)
-    # result_med = run_hhl(A_med, b_med, n_clock=12)
+    print("\n\n>>> Large system: 32x32 (18 qubits)\n")
+    n = 32
+    np.random.seed(42)
+    eigenvalues_custom = np.random.uniform(1.0, 10.0, size=n)
+    Q, _ = np.linalg.qr(np.random.randn(n, n))
+    A_med = Q @ np.diag(eigenvalues_custom) @ Q.T
+    b_med = np.random.randn(n)
+    result_med = run_hhl(A_med, b_med, n_clock=12, use_trotter=False)
