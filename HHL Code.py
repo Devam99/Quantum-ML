@@ -392,7 +392,7 @@ def run_hhl(A, b, n_clock=None):
 
 if __name__ == "__main__":
 
-    # # Example 1: 2x2 system (same as your working code)
+    # Example 1: 2x2 system (same as your working code)
     # print("\n>>> Example 1: 2x2 system (eigenvalues 1 and 2)\n")
     # A1 = np.array([
     #     [1.5, 0.5],
