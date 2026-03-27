@@ -1,10 +1,13 @@
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
 import numpy as np
 from scipy.linalg import expm
 from qiskit import QuantumCircuit, ClassicalRegister, transpile
 from qiskit.circuit.library import UnitaryGate, RYGate, QFTGate, HamiltonianGate
 from qiskit.quantum_info import Statevector
 from qiskit_aer import AerSimulator
-import matplotlib.pyplot as plt
+
 
 def validate_inputs(A, b):
     """Check that A is Hermitian, square, invertible, dimensions are
