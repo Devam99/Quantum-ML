@@ -2,6 +2,7 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import numpy as np
+import time
 from scipy.linalg import expm
 from qiskit import QuantumCircuit, ClassicalRegister, transpile
 from qiskit.circuit.library import UnitaryGate, RYGate, QFTGate, HamiltonianGate
@@ -564,6 +565,86 @@ def run_all_examples():
     return results
 
 
+def run_classical_comparison(examples=None):
+    """Compare HHL runtime and accuracy with classical solvers."""
+    if examples is None:
+        examples = generate_examples()
+
+    print(f"\n{'=' * 90}")
+    print(f"{'CLASSICAL vs HHL COMPARISON':^90}")
+    print(f"{'=' * 90}")
+    print(f"{'System':<10} {'N':<6} {'Kappa':<8} {'Classical (s)':<15} "
+          f"{'HHL Build (s)':<15} {'HHL Sim (s)':<15} {'Fidelity':<12}")
+    print(f"{'-' * 90}")
+
+    results = {}
+
+    for name, ex in examples.items():
+        A = ex['A']
+        b = ex['b']
+        n_clock = ex['n_clock']
+        N = A.shape[0]
+
+        info = get_system_info(A, b)
+        eigenvalues = info['eigenvalues']
+        kappa = info['kappa']
+        x_classical_norm = info['x_classical_norm']
+
+        # Time classical solution
+        t_start = time.time()
+        for _ in range(100):  # average over 100 runs
+            x_cl = np.linalg.solve(A, b)
+        t_classical = (time.time() - t_start) / 100
+
+        # Time HHL circuit build
+        t0, C = choose_parameters(eigenvalues, n_clock)
+        t_start = time.time()
+        qc, sys_q, clk_q, anc_q = build_hhl_circuit(
+            A, b, n_clock, t0, C, eigenvalues, info['n_system']
+        )
+        t_build = time.time() - t_start
+
+        # Time HHL simulation
+        t_start = time.time()
+        x_hhl_norm, p_success = extract_solution_statevector(
+            qc, sys_q, clk_q, anc_q, info['n_system'], n_clock
+        )
+        t_sim = time.time() - t_start
+
+        fidelity = np.abs(np.dot(np.conj(x_hhl_norm), x_classical_norm))**2
+
+        print(f"{name:<10} {N:<6} {kappa:<8.2f} {t_classical:<15.6f} "
+              f"{t_build:<15.4f} {t_sim:<15.4f} {fidelity:<12.6f}")
+
+        results[name] = {
+            'N': N,
+            'kappa': kappa,
+            't_classical': t_classical,
+            't_build': t_build,
+            't_sim': t_sim,
+            'fidelity': fidelity,
+            'p_success': p_success,
+            'depth': qc.depth(),
+        }
+
+    # Print repetition-adjusted comparison
+    print(f"\n{'=' * 90}")
+    print(f"{'REPETITION-ADJUSTED COMPARISON':^90}")
+    print(f"{'=' * 90}")
+    print(f"{'System':<10} {'P(success)':<12} {'Expected reps':<15} "
+          f"{'HHL total (s)':<15} {'Classical (s)':<15} {'Ratio':<10}")
+    print(f"{'-' * 90}")
+
+    for name, r in results.items():
+        reps = 1.0 / r['p_success'] if r['p_success'] > 1e-12 else float('inf')
+        hhl_total = reps * r['t_sim']
+        ratio = hhl_total / r['t_classical'] if r['t_classical'] > 1e-12 else float('inf')
+        print(f"{name:<10} {r['p_success']:<12.6f} {reps:<15.1f} "
+              f"{hhl_total:<15.4f} {r['t_classical']:<15.6f} {ratio:<10.1f}")
+
+    return results
+
+
 if __name__ == "__main__":
 
     # Example 1: 2x2 system (same as your working code)
@@ -673,4 +754,5 @@ if __name__ == "__main__":
     # print(f"4x4 stats: {stats4}")
 
     results = run_all_examples()
+    comparison = run_classical_comparison()
 
